@@ -171,12 +171,13 @@ if [ x"$1" = x--read ]; then
   exit 0
 fi
 
-shell_mode=false
+shell_mode=true
 stealth_mode=false
+new_section=
 while [ $# -gt 0 ]; do
   case $1 in
   --shell)
-    shell_mode=true
+    # do nothing
     ;;
   -*)
     cmd_usage "invalid option: $1"
@@ -184,6 +185,14 @@ while [ $# -gt 0 ]; do
   stealth)
     shell_mode=true
     stealth_mode=true
+    ;;
+  [a-z]*)
+    if [ -z "$new_section" ]; then
+      new_section=$1
+    else
+      shell_mode=false
+      break
+    fi
     ;;
   *)
     break;
@@ -194,43 +203,42 @@ done
 
 prompt="cht.sh"
 if [ $# -eq 0 ]; then
-  shell_mode=true
-  input=
+  input=""
 else
-  input="$*"
+  input="$new_section $*"
 fi
+
+# TODO: whitespace cleanup
+valid_sections=$(get_list_of_sections)
+valid=false; for q in $valid_sections; do [ "$q" = "$new_section/" ] && { valid=true; break; }; done
+
+if $valid; then
+  section="$new_section"
+  this_query="$*"
+  this_prompt="\033[0;32mcht.sh/$section>\033[0m "
+  input="$section $*"
+else
+  this_query=
+#  this_query="$new_section $*"
+#  this_prompt="\033[0;32mcht.sh>\033[0m "
+fi
+
+query=$(printf "%s/%s" "$new_section/$input" | sed 's@ *$@@; s@^ *@@; s@ @/@; s@ @+@g')
 
 if ! $shell_mode; then
   curl -s "${CHTSH_URL}"/"$(get_query_options "$query")"
   exit 0
 fi
 
+if [ -n "$this_query" ] && [ -z "$CHEATSH_RESTART" ]; then
+  printf "$this_prompt$this_query\n"
+  #XXX curl -s "${CHTSH_URL}"/"$(get_query_options "$query")"
+fi
+
 if $is_macos; then
   command -v xsel >/dev/null ||   echo 'DEPENDENCY: please install "xsel" for "copy"' >&2
 fi
 command -v rlwrap >/dev/null || { echo 'DEPENDENCY: install "rlwrap" to use cht.sh in the shell mode' >&2; exit 1; }
-
-  # TODO: whitespace cleanup
-  new_section="$1"
-  valid_sections=$(get_list_of_sections)
-  valid=false; for q in $valid_sections; do [ "$q" = "$new_section/" ] && { valid=true; break; }; done
-
-  if $valid; then
-    section="$new_section"
-    this_query="$(echo "$input" | sed 's@ *[^ ]* *@@')"
-    this_prompt="\033[0;32mcht.sh/$section>\033[0m "
-    shift
-    input="$*"
-  else
-    this_query="$input"
-    this_prompt="\033[0;32mcht.sh>\033[0m "
-  fi
-  if [ -n "$this_query" ] && [ -z "$CHEATSH_RESTART" ]; then
-    printf "$this_prompt$this_query\n"
-    #XXX curl -s "${CHTSH_URL}"/"$(get_query_options "$query")"
-  fi
-
-query=$(printf "%s" "$input" | sed 's@ *$@@; s@^ *@@; s@ @/@; s@ @+@g')
 
 mkdir -p "$HOME/.cht.sh/"
 lines=$(tput lines)
