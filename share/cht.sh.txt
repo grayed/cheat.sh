@@ -30,8 +30,8 @@ export LESSSECURE=1
 STEALTH_MAX_SELECTION_LENGTH=5
 
 case `uname -s` in
-  Darwin) is_macos=yes ;;
-  *) is_macos=no ;;
+  Darwin) is_macos=true ;;
+  *) is_macos=false ;;
 esac
 
 # for KSH93
@@ -132,6 +132,7 @@ fi
 if [ `uname -s` = OpenBSD ] && [ -x /usr/bin/ftp ]; then
   curl() {
     local opt args="-o -"
+    OPTIND=1
     while getopts "b:s" opt; do
       case $opt in
         b) args="$args -c $OPTARG";;
@@ -152,63 +153,84 @@ else
   fi
 fi
 
+cmd_usage() {
+  for line; do echo "$line" >&2; done
+  cat <<EOF
+Usage:
+    ${0##*/} --help            show this help
+    ${0##*/} [stealth] [LANG]  normal/stealth shell mode (for LANG if specified)
+    ${0##*/} QUERY             process QUERY and exit
+EOF
+  exit 1
+}
 
-if [ "$1" = --read ]; then
+# special handling of pure internal option
+if [ x"$1" = x--read ]; then
   read -r a || a=exit
   printf "%s\n" "$a"
   exit 0
-elif [ x"$1" = x--help ] || [ -z "$1" ]; then
-  cat <<EOF
-Usage:
-
-    ${0##*/} --help           show this help
-    ${0##*/} --shell [LANG]   shell mode (open LANG if specified)
-    ${0##*/} QUERY            process QUERY and exit
-EOF
-  exit 0
-elif [ x"$1" = x--shell ]; then
-  shell_mode=yes
-  shift
 fi
 
-prompt="cht.sh"
-opts=""
-input=""
-for o; do
-  if [ x"$o" != x"${o#-}" ]; then
-    opts="${opts}${o#-}"
-  else
-    input="$input $o"
-  fi
+shell_mode=false
+stealth_mode=false
+while [ $# -gt 0 ]; do
+  case $1 in
+  --shell)
+    shell_mode=true
+    ;;
+  -*)
+    cmd_usage "invalid option: $1"
+    ;;
+  stealth)
+    shell_mode=true
+    stealth_mode=true
+    ;;
+  *)
+    break;
+    ;;
+  esac
+  shift
 done
-query=$(echo "$input" | sed 's@ *$@@; s@^ *@@; s@ @/@; s@ @+@g')
 
-if [ "$shell_mode" != yes ]; then
+prompt="cht.sh"
+if [ $# -eq 0 ]; then
+  shell_mode=true
+  input=
+else
+  input="$*"
+fi
+
+if ! $shell_mode; then
   curl -s "${CHTSH_URL}"/"$(get_query_options "$query")"
   exit 0
-else
+fi
+
+if $is_macos; then
+  command -v xsel >/dev/null ||   echo 'DEPENDENCY: please install "xsel" for "copy"' >&2
+fi
+command -v rlwrap >/dev/null || { echo 'DEPENDENCY: install "rlwrap" to use cht.sh in the shell mode' >&2; exit 1; }
+
+  # TODO: whitespace cleanup
   new_section="$1"
   valid_sections=$(get_list_of_sections)
-  valid=no; for q in $valid_sections; do [ "$q" = "$new_section/" ] && { valid=yes; break; }; done
+  valid=false; for q in $valid_sections; do [ "$q" = "$new_section/" ] && { valid=true; break; }; done
 
-  if [ "$valid" = yes ]; then
+  if $valid; then
     section="$new_section"
     this_query="$(echo "$input" | sed 's@ *[^ ]* *@@')"
     this_prompt="\033[0;32mcht.sh/$section>\033[0m "
+    shift
+    input="$*"
   else
     this_query="$input"
     this_prompt="\033[0;32mcht.sh>\033[0m "
   fi
   if [ -n "$this_query" ] && [ -z "$CHEATSH_RESTART" ]; then
     printf "$this_prompt$this_query\n"
-    curl -s "${CHTSH_URL}"/"$(get_query_options "$query")"
+    #XXX curl -s "${CHTSH_URL}"/"$(get_query_options "$query")"
   fi
-fi
 
-if [ "$is_macos" != yes ]; then
-  command -v xsel >/dev/null ||   echo 'DEPENDENCY: please install "xsel" for "copy"' >&2
-fi
-command -v rlwrap >/dev/null || { echo 'DEPENDENCY: install "rlwrap" to use cht.sh in the shell mode' >&2; exit 1; }
+query=$(printf "%s" "$input" | sed 's@ *$@@; s@^ *@@; s@ @/@; s@ @+@g')
 
 mkdir -p "$HOME/.cht.sh/"
 lines=$(tput lines)
@@ -230,8 +252,8 @@ cmd_cd() {
       section=""
     else
       valid_sections=$(get_list_of_sections)
-      valid=no; for q in $valid_sections; do [ "$q" = "$new_section/" ] && { valid=yes; break; }; done
-      if [ "$valid" = no ]; then
+      valid=false; for q in $valid_sections; do [ "$q" = "$new_section/" ] && { valid=true; break; }; done
+      if ! $valid; then
         echo "Invalid section: $new_section"
         echo "Valid sections:"
         echo $valid_sections | xargs printf "%-10s\n" | tr ' ' .  | xargs -n 10 | sed 's/\./ /g; s/^/  /'
@@ -249,7 +271,7 @@ cmd_copy() {
     echo copy: Make at least one query first.
   else
     curl -s "${CHTSH_URL}"/"$(get_query_options "$query"?T)" > "$TMP1"
-    if [ "$is_macos" != yes ]; then
+    if $is_macos; then
       xsel -bi < "$TMP1"
     else
       cat "$TMP1" | pbcopy
@@ -265,7 +287,7 @@ cmd_ccopy() {
     echo copy: Make at least one query first.
   else
     curl -s "${CHTSH_URL}"/"$(get_query_options "$query"?TQ)" > "$TMP1"
-    if [ "$is_macos" != yes ]; then
+    if $is_macos; then
       xsel -bi < "$TMP1"
     else
       cat "$TMP1" | pbcopy
@@ -359,7 +381,7 @@ cmd_stealth() {
     arguments=$(echo "$input" | sed 's/stealth //; s/ /\&/')
   fi
   trap break INT
-  if [ "$is_macos" = yes ]; then
+  if $is_macos; then
     past=$(pbpaste)
   else
     past=$(xsel -o)
@@ -371,7 +393,7 @@ cmd_stealth() {
   fi
   printf "\033[0;31mstealth:\033[0m use ^C to leave this mode\n"
   while true; do
-    if [ "$is_macos" = yes ]; then
+    if $is_macos; then
       current=$(pbpaste)
     else
       current=$(xsel -o)
